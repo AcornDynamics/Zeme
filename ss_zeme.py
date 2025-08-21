@@ -13,9 +13,11 @@ from requests.adapters import HTTPAdapter
 def make_session():
     s = requests.Session()
     s.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                      "AppleWebKit/537.36 (KHTML, like Gecko) "
-                      "Chrome/123.0 Safari/537.36"
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/123.0 Safari/537.36"
+        )
     })
     retries = Retry(
         total=3,
@@ -29,50 +31,61 @@ def make_session():
 SESSION = make_session()
 
 # ----------------------------
-# Helpers for listing pages
+# Listing-page helpers
 # ----------------------------
-def getUrlList(url, prefix='https://www.ss.com', postfix='sell/', tag='a', class_='a_category'):
-    resp = SESSION.get(url, timeout=15)
+def getRows(listing_url):
+    """Return SS.lv listing <tr> rows for a category page."""
+    resp = SESSION.get(listing_url, timeout=20)
     if resp.status_code != 200:
-        print(f'Unexpected status code {resp.status_code}. Stopping parse')
-        return []
-    soup = BeautifulSoup(resp.text, 'lxml')
-    return [prefix + el['href'] + postfix for el in soup.find_all(tag, class_)]
-
-def processRow(row, baseurl='https://www.ss.com'):
-    tds = row.find_all('td')
-    link = baseurl + tds[1].a['href']
-    title = tds[2].get_text(strip=True).replace('\r', '').replace('\n', '')
-    return [link, title]
-
-def getRows(url):
-    resp = SESSION.get(url, timeout=15)
-    if resp.status_code != 200:
-        print(f"Bad request {resp.status_code} for {url}")
+        print(f"[WARN] Bad request {resp.status_code} for {listing_url}")
         return []
     soup = BeautifulSoup(resp.text, 'lxml')
     rows = []
     for el in soup.find_all('tr'):
-        if 'id' in el.attrs and 'tr_' in el.attrs['id']:
+        if 'id' in el.attrs and el.attrs['id'].startswith('tr_'):
             rows.append(el)
+    # SS.lv often has a trailing non-ad row; prior code removed last row
     return rows[:-1] if rows else []
 
-def processPage(url):
-    rows = getRows(url)
-    return [processRow(r) for r in rows]
+def row_to_link(row, baseurl='https://www.ss.com'):
+    """Extract ad link + title from a listing row."""
+    tds = row.find_all('td')
+    link = baseurl + tds[1].a['href']
+    title = tds[2].get_text(strip=True).replace('\r', '').replace('\n', '')
+    return link, title
 
-def processPages(urls, delay=0.15):
-    results = []
-    for u in urls:
-        results += processPage(u)
+def collect_all_listing_links(base_sell_url, delay=0.12, max_pages=5000):
+    """
+    Iterate pages: /sell/, /sell/page2.html, /sell/page3.html, ...
+    Stop when a page has no ad rows or max_pages reached.
+    """
+    page = 1
+    links = []
+    seen = set()
+
+    while page <= max_pages:
+        url = base_sell_url if page == 1 else f"{base_sell_url}page{page}.html"
+        rows = getRows(url)
+        if not rows:
+            break
+
+        for r in rows:
+            href, _title = row_to_link(r)
+            if href not in seen:
+                seen.add(href)
+                links.append(href)
+
+        print(f"[INFO] Page {page}: +{len(rows)} rows, total unique links: {len(links)}")
+        page += 1
         time.sleep(delay)
-    return results
+
+    return links
 
 # ----------------------------
 # Ad page parsing
 # ----------------------------
 def get_url_soup(url):
-    r = SESSION.get(url, timeout=20)
+    r = SESSION.get(url, timeout=25)
     r.raise_for_status()
     return BeautifulSoup(r.text, 'lxml')
 
@@ -93,14 +106,14 @@ def parse_ad_details(url):
     soup = get_url_soup(url)
     data = {
         "Link": url,
-        "Pilseta": extract_text_by_id(soup, "tdo_20"),
-        "Iela": extract_text_by_id(soup, "tdo_11"),
-        "Ciems": extract_text_by_id(soup, "tdo_368"),   # NEW: Ciems
-        "Platiba": extract_text_by_id(soup, "tdo_3"),
-        "Cena": extract_text_by_id(soup, "tdo_8"),
-        "Zemes Tips": extract_text_by_id(soup, "tdo_228"),
-        "Zemes Numurs": extract_text_by_id(soup, "tdo_1631"),
-        "Datums": extract_datums(soup),
+        "Pilseta":       extract_text_by_id(soup, "tdo_20"),
+        "Iela":          extract_text_by_id(soup, "tdo_11"),
+        "Ciems":         extract_text_by_id(soup, "tdo_368"),   # Ciems (village)
+        "Platiba":       extract_text_by_id(soup, "tdo_3"),
+        "Cena":          extract_text_by_id(soup, "tdo_8"),
+        "Zemes Tips":    extract_text_by_id(soup, "tdo_228"),
+        "Zemes Numurs":  extract_text_by_id(soup, "tdo_1631"),
+        "Datums":        extract_datums(soup),
     }
     return data
 
@@ -108,37 +121,31 @@ def data_collection_date():
     return datetime.today().strftime('%Y-%m-%d')
 
 # ----------------------------
-# Main scrape function
+# Main scrape
 # ----------------------------
-def scrape_ss_lv_plots_and_lands():
-    base_url = "https://www.ss.lv/lv/real-estate/plots-and-lands/"
-    region_listing_urls = getUrlList(base_url)
+def scrape_ss_lv_plots_and_lands_all():
+    base_sell_url = "https://www.ss.lv/lv/real-estate/plots-and-lands/sell/"
 
-    listings = processPages(region_listing_urls)
-    if not listings:
-        return pd.DataFrame(columns=[
-            'Link','Pilseta','Iela','Ciems','Platiba','Cena','Zemes Tips',
-            'Zemes Numurs','Datums','Datu iev.','Cena EUR','Cena m2',
-            'Platiba Daudzums','Platiba Mervieniba'
-        ])
+    # 1) Collect ALL ad links across ALL pages under /sell/
+    links = collect_all_listing_links(base_sell_url)
 
-    links = [row[0] for row in listings]
-
+    # 2) Fetch details for each ad (with a polite delay)
     details = []
     for i, link in enumerate(links, start=1):
         try:
             details.append(parse_ad_details(link))
         except Exception as e:
-            print(f"Failed {i}/{len(links)}: {link} -> {e}")
-        time.sleep(0.15)
+            print(f"[WARN] {i}/{len(links)} failed: {link} -> {e}")
+        time.sleep(0.12)
 
     df = pd.DataFrame(details)
     if df.empty:
         return df
 
+    # 3) Add collection date
     df['Datu iev.'] = data_collection_date()
 
-    # Price split
+    # 4) Normalize price/area like before
     df['Cena'] = df['Cena'].fillna('NA').astype(str)
     df['Cena EUR'] = (
         df['Cena']
@@ -152,7 +159,6 @@ def scrape_ss_lv_plots_and_lands():
         .str.replace(',', '.', regex=False)
     )
 
-    # Area split
     df['Platiba'] = df['Platiba'].fillna('NA').astype(str)
     plat_split = df['Platiba'].str.extract(r'([\d\.,]+)\s*(.*)')
     df['Platiba Daudzums'] = (
@@ -165,15 +171,20 @@ def scrape_ss_lv_plots_and_lands():
     for col in ['Cena EUR', 'Cena m2', 'Platiba Daudzums']:
         df[col] = pd.to_numeric(df[col], errors='coerce')
 
+    # 5) Drop raw columns if you don't need them
     df = df.drop(columns=['Platiba', 'Cena'], errors='ignore')
+
+    # 6) Ensure uniqueness by link (in case of cross-page promos/dups)
+    df = df.drop_duplicates(subset=['Link']).reset_index(drop=True)
+
     return df
 
 # ----------------------------
-# Run & preview
+# Run
 # ----------------------------
 if __name__ == "__main__":
-    df_zeme = scrape_ss_lv_plots_and_lands()
-    print(f"Rows: {len(df_zeme)}")
+    df_zeme = scrape_ss_lv_plots_and_lands_all()
+    print(f"Total adverts scraped: {len(df_zeme)}")
     print(df_zeme.head(10).to_string(index=False))
     # Export manually if needed:
     # df_zeme.to_csv("ss_lv_zeme.csv", index=False)
