@@ -338,3 +338,43 @@ if __name__ == "__main__":
     # df_zeme.to_parquet("ss_lv_zeme_two_phase.parquet", index=False)
 
 # %%
+# Replace all instances of "[Karte]" with "" in column: 'Iela'
+df_zeme['Iela'] = df_zeme['Iela'].str.replace("[Karte]", "", case=False, regex=False)
+
+# Replace all instances of "Datums:" with "" in column: 'Datums'
+df_zeme['Datums'] = df_zeme['Datums'].str.replace("Datums:", "", case=False, regex=False)
+
+# Filter rows based on column: 'Cena EUR'
+df_zeme = df_zeme[df_zeme['Cena EUR'].notna()]
+
+# Filter rows based on column: 'Platiba Daudzums'
+df_zeme = df_zeme[df_zeme['Platiba Daudzums'].notna()]
+
+# Replace all instances of "." with "" in column: 'Platiba Mervieniba'
+df_zeme['Platiba Mervieniba'] = df_zeme['Platiba Mervieniba'].str.replace(".", "", case=False, regex=False)
+
+#%%
+
+# --- Normalize units and add converted area columns ---
+# Clean the unit text: lower-case, remove dots/spaces, unify m² -> m2
+unit = (
+    df_zeme['Platiba Mervieniba']
+    .fillna('')
+    .str.strip()
+    .str.lower()
+    .str.replace('.', '', regex=False)
+    .str.replace(r'\s+', '', regex=True)
+    .str.replace('m²', 'm2', regex=False)
+)
+
+amt = pd.to_numeric(df_zeme['Platiba Daudzums'], errors='coerce')
+
+# If unit == ha  -> m2 = amt * 10000, ha = amt
+# If unit == m2  -> m2 = amt,         ha = amt / 10000
+is_ha = unit.eq('ha')
+
+df_zeme['Platiba m2'] = amt.where(~is_ha, amt * 10000)
+df_zeme['Platiba ha'] = amt.where(is_ha,  amt / 10000)
+
+
+# %%
