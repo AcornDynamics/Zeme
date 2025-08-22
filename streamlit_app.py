@@ -17,7 +17,7 @@ def _to_numeric_clean(s: pd.Series) -> pd.Series:
     return pd.to_numeric(
         s.astype(str)
          .str.replace(r"[^0-9,\.\-]", "", regex=True)  # keep digits, comma, dot, minus
-         .str.replace(",", ".", regex=False),           # EU decimal -> dot
+         .str.replace(",", ".", regex=False),          # EU decimal -> dot
         errors="coerce",
     )
 
@@ -65,25 +65,30 @@ def main():
     st.write("Simple Streamlit app to explore property data.")
     df = pd.read_csv("df_zeme.csv")
 
-    # ---- Metrics row (will be filled after filters are applied) -------------
+    # ---- Metrics row (filled after filters) ---------------------------------
     m1, m2, m3 = st.columns(3)
 
-    # ---- Filters (shown under the metrics) ----------------------------------
+    # ---- Filters (under metrics) --------------------------------------------
     cities = sorted(df["Pilseta"].dropna().astype(str).unique()) if "Pilseta" in df.columns else []
     types = sorted(df["Zemes Tips"].dropna().astype(str).unique()) if "Zemes Tips" in df.columns else []
+    pp_opts = sorted(df["Pilseta/Pagasts"].dropna().astype(str).unique()) if "Pilseta/Pagasts" in df.columns else []
 
-    f1, f2 = st.columns(2)
+    f1, f2, f3 = st.columns(3)
     with f1:
         sel_cities = st.multiselect("Pilseta", options=cities, default=[])
     with f2:
         sel_types = st.multiselect("Zemes Tips", options=types, default=[])
+    with f3:
+        sel_pp = st.multiselect("Pilseta/Pagasts", options=pp_opts, default=[])
 
-    # ---- Apply filters ------------------------------------------------------
+    # ---- Apply filters -------------------------------------------------------
     filtered = df.copy()
     if sel_cities and "Pilseta" in filtered.columns:
         filtered = filtered[filtered["Pilseta"].astype(str).isin(sel_cities)]
     if sel_types and "Zemes Tips" in filtered.columns:
         filtered = filtered[filtered["Zemes Tips"].astype(str).isin(sel_types)]
+    if sel_pp and "Pilseta/Pagasts" in filtered.columns:
+        filtered = filtered[filtered["Pilseta/Pagasts"].astype(str).isin(sel_pp)]
 
     # ---- KPIs (metrics) based on filtered data ------------------------------
     property_count = int(filtered["Link"].dropna().shape[0]) if "Link" in filtered.columns else int(len(filtered))
@@ -101,14 +106,13 @@ def main():
     # ---- Chart: Properties per City (count of Link per Pilseta) -------------
     if "Pilseta" in filtered.columns:
         if "Link" in filtered.columns:
-            grp = (filtered[filtered["Link"].notna()]
-                   .assign(Pilseta=filtered["Pilseta"].astype(str))
-                   .groupby("Pilseta")["Link"].count()
-                   .reset_index(name="Property count"))
+            tmp = filtered[filtered["Link"].notna()].copy()
+            tmp["Pilseta"] = tmp["Pilseta"].astype(str)
+            grp = tmp.groupby("Pilseta")["Link"].count().reset_index(name="Property count")
         else:
-            grp = (filtered.assign(Pilseta=filtered["Pilseta"].astype(str))
-                   .groupby("Pilseta").size()
-                   .reset_index(name="Property count"))
+            tmp = filtered.copy()
+            tmp["Pilseta"] = tmp["Pilseta"].astype(str)
+            grp = tmp.groupby("Pilseta").size().reset_index(name="Property count")
 
         if not grp.empty:
             grp = grp.sort_values("Property count", ascending=False)
@@ -124,33 +128,32 @@ def main():
     else:
         st.info("Column 'Pilseta' not found in the dataset.")
 
-# ---- Data table (show filtered results) ---------------------------------
-df_display = filtered.copy()
-if "Platiba m2" not in df_display.columns and not size_m2_series.isna().all():
-    df_display["Platiba m2"] = size_m2_series
+    # ---- Data table (show filtered results) ---------------------------------
+    df_display = filtered.copy()
+    if "Platiba m2" not in df_display.columns and not size_m2_series.isna().all():
+        df_display["Platiba m2"] = size_m2_series
 
-# Show links as a single 🔗 icon instead of full URL
-if "Link" in df_display.columns:
-    df_show = df_display.copy()
-    df_show["Open"] = df_show["Link"]  # preserve URL
-    column_order = ["Open"] + [c for c in df_show.columns if c not in ("Open", "Link")]
-    st.dataframe(
-        df_show[column_order],
-        column_config={
-            "Open": st.column_config.LinkColumn(
-                "Open", help="Open listing", display_text="🔗"
-            ),
-        },
-        use_container_width=True,
-        height=600,
-    )
-else:
-    st.dataframe(
-        df_display,
-        use_container_width=True,
-        height=600,
-    )
-
+    # Show links as a single 🔗 icon instead of full URL
+    if "Link" in df_display.columns:
+        df_show = df_display.copy()
+        df_show["Open"] = df_show["Link"]  # preserve URL
+        column_order = ["Open"] + [c for c in df_show.columns if c not in ("Open", "Link")]
+        st.dataframe(
+            df_show[column_order],
+            column_config={
+                "Open": st.column_config.LinkColumn(
+                    "Open", help="Open listing", display_text="🔗"
+                ),
+            },
+            use_container_width=True,
+            height=600,
+        )
+    else:
+        st.dataframe(
+            df_display,
+            use_container_width=True,
+            height=600,
+        )
 
 
 if __name__ == "__main__":
