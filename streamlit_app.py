@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import plotly.express as px
 
 
 def _to_numeric_clean(s: pd.Series) -> pd.Series:
@@ -97,6 +98,32 @@ def main():
     with m3:
         st.metric("Avg size (m²)", "—" if np.isnan(avg_size_m2) else f"{avg_size_m2:,.0f} m²")
 
+
+# ---- Chart: Properties per City (count of Link per Pilseta) ----
+# Assumes you have `filtered` already (the dataframe after applying multiselects).
+if "Pilseta" in filtered.columns:
+    if "Link" in filtered.columns:
+        grp = (filtered[filtered["Link"].notna()]
+               .assign(Pilseta=filtered["Pilseta"].astype(str))
+               .groupby("Pilseta")["Link"].count()
+               .reset_index(name="Property count"))
+    else:
+        grp = (filtered.assign(Pilseta=filtered["Pilseta"].astype(str))
+               .groupby("Pilseta")
+               .size()
+               .reset_index(name="Property count"))
+
+    if not grp.empty:
+        grp = grp.sort_values("Property count", ascending=False)
+        grp["Pilseta"] = pd.Categorical(grp["Pilseta"], categories=grp["Pilseta"], ordered=True)
+        fig = px.bar(grp, x="Pilseta", y="Property count", title="Properties per City")
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("No data to plot for selected filters.")
+else:
+    st.info("Column 'Pilseta' not found in the dataset.")
+    
+    
     # ---- Data table (show filtered results) ---------------------------------
     df_display = filtered.copy()
     if "Platiba m2" not in df_display.columns and not size_m2_series.isna().all():
