@@ -2,6 +2,13 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 
+# Try to use Plotly for the sunburst
+try:
+    import plotly.express as px
+    _HAS_PLOTLY = True
+except Exception:
+    _HAS_PLOTLY = False
+
 
 def _to_numeric_clean(s: pd.Series) -> pd.Series:
     """Convert strings like '12 345,67€' to numeric, return NaN on failure."""
@@ -10,7 +17,7 @@ def _to_numeric_clean(s: pd.Series) -> pd.Series:
     return pd.to_numeric(
         s.astype(str)
          .str.replace(r"[^0-9,\.\-]", "", regex=True)  # keep digits, comma, dot, minus
-         .str.replace(",", ".", regex=False),           # EU decimal -> dot
+         .str.replace(",", ".", regex=False),          # EU decimal -> dot
         errors="coerce",
     )
 
@@ -56,7 +63,7 @@ def _derive_size_m2(df: pd.DataFrame) -> pd.Series:
 def main():
     st.title("Zeme Data Explorer")
     st.write("Simple Streamlit app to explore property data.")
-    df = pd.read_csv("df_zeme_filtered.csv")
+    df = pd.read_csv("df_zeme_filtered.csv")  # <-- switched to this CSV
 
     # ---- Metrics row (filled after filters) ---------------------------------
     m1, m2, m3 = st.columns(3)
@@ -96,28 +103,29 @@ def main():
     with m3:
         st.metric("Avg size (m²)", "—" if np.isnan(avg_size_m2) else f"{avg_size_m2:,.0f} m²")
 
-    # ---- Chart: Properties per City (count of Link per Pilseta) -------------
-    if "Pilseta" in filtered.columns:
-        if "Link" in filtered.columns:
-            grp = (filtered[filtered["Link"].notna()]
-                   .assign(Pilseta=filtered["Pilseta"].astype(str))
-                   .groupby("Pilseta")["Link"].count())
-        else:
-            grp = (filtered.assign(Pilseta=filtered["Pilseta"].astype(str))
-                   .groupby("Pilseta").size())
-
-        if not grp.empty:
-            s = grp.sort_values(ascending=False)
-            st.bar_chart(
-                s,
-                use_container_width=True,
-                height=max(160, 28 * len(s) + 80),
-                horizontal=True,
+    # ---- Sunburst: Pilseta -> Pilseta/Pagasts -> Ciems ----------------------
+    st.subheader("Location hierarchy (Sunburst)")
+    if _HAS_PLOTLY:
+        hierarchy_cols = [c for c in ["Pilseta", "Pilseta/Pagasts", "Ciems"] if c in filtered.columns]
+        if hierarchy_cols:
+            sun = filtered.copy()
+            # Count weights: prefer non-null Link counts; otherwise each row counts as 1
+            sun["__value__"] = sun["Link"].notna().astype(int) if "Link" in sun.columns else 1
+            # Fill missing labels for cleaner hierarchy
+            for c in hierarchy_cols:
+                sun[c] = sun[c].fillna("—").astype(str).str.strip().replace({"": "—"})
+            fig = px.sunburst(
+                sun,
+                path=hierarchy_cols,        # 1: Pilseta, 2: Pilseta/Pagasts, 3: Ciems
+                values="__value__",
+                title="Properties by Pilseta → Pagasts → Ciems",
             )
+            fig.update_layout(margin=dict(l=0, r=0, t=40, b=0), height=600)
+            st.plotly_chart(fig, use_container_width=True)
         else:
-            st.info("No data to plot for selected filters.")
+            st.info("Sunburst requires at least one of: 'Pilseta', 'Pilseta/Pagasts', 'Ciems'.")
     else:
-        st.info("Column 'Pilseta' not found in the dataset.")
+        st.warning("Plotly not installed. Run: pip install plotly")
 
     # ---- Kadastra karte overlay (LVM) — temporarily disabled -----------------
     # Map overlay (WMS/WFS) is commented out per request. Reinsert later if needed.
