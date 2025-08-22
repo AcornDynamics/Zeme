@@ -2,13 +2,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 
-# Plotly is optional; fall back to st.bar_chart if missing
-try:
-    import plotly.express as px
-    _HAS_PLOTLY = True
-except Exception:
-    _HAS_PLOTLY = False
-
 
 def _to_numeric_clean(s: pd.Series) -> pd.Series:
     """Convert strings like '12 345,67€' to numeric, return NaN on failure."""
@@ -17,7 +10,7 @@ def _to_numeric_clean(s: pd.Series) -> pd.Series:
     return pd.to_numeric(
         s.astype(str)
          .str.replace(r"[^0-9,\.\-]", "", regex=True)  # keep digits, comma, dot, minus
-         .str.replace(",", ".", regex=False),          # EU decimal -> dot
+         .str.replace(",", ".", regex=False),           # EU decimal -> dot
         errors="coerce",
     )
 
@@ -106,32 +99,28 @@ def main():
     # ---- Chart: Properties per City (count of Link per Pilseta) -------------
     if "Pilseta" in filtered.columns:
         if "Link" in filtered.columns:
-            tmp = filtered[filtered["Link"].notna()].copy()
-            tmp["Pilseta"] = tmp["Pilseta"].astype(str)
-            grp = tmp.groupby("Pilseta")["Link"].count().reset_index(name="Property count")
+            grp = (filtered[filtered["Link"].notna()]
+                   .assign(Pilseta=filtered["Pilseta"].astype(str))
+                   .groupby("Pilseta")["Link"].count())
         else:
-            tmp = filtered.copy()
-            tmp["Pilseta"] = tmp["Pilseta"].astype(str)
-            grp = tmp.groupby("Pilseta").size().reset_index(name="Property count")
+            grp = (filtered.assign(Pilseta=filtered["Pilseta"].astype(str))
+                   .groupby("Pilseta").size())
 
         if not grp.empty:
-            grp = grp.sort_values("Property count", ascending=False)
-            if _HAS_PLOTLY:
-                grp["Pilseta"] = pd.Categorical(grp["Pilseta"], categories=grp["Pilseta"], ordered=True)
-                fig = px.bar(grp, x="Pilseta", y="Property count", title="Properties per City")
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.warning("Plotly not installed; showing a basic bar chart instead.")
-                st.bar_chart(grp.set_index("Pilseta")["Property count"])
+            s = grp.sort_values(ascending=False)
+            st.bar_chart(
+                s,
+                use_container_width=True,
+                height=max(160, 28 * len(s) + 80),
+                horizontal=True,
+            )
         else:
             st.info("No data to plot for selected filters.")
     else:
         st.info("Column 'Pilseta' not found in the dataset.")
 
     # ---- Kadastra karte overlay (LVM) — temporarily disabled -----------------
-    # The folium/streamlit-folium map block has been commented out per request.
-    # When ready, re-insert the map overlay here (WMS/WFS) and ensure dependencies are installed.
-    # See previous version for reference.
+    # Map overlay (WMS/WFS) is commented out per request. Reinsert later if needed.
 
     # ---- Data table (show filtered results) ---------------------------------
     df_display = filtered.copy()
@@ -143,7 +132,6 @@ def main():
         df_show = df_display.copy()
         df_show["Open"] = df_show["Link"]  # preserve URL
         column_order = ["Open"] + [c for c in df_show.columns if c not in ("Open", "Link")]
-    
         st.dataframe(
             df_show[column_order],
             column_config={
