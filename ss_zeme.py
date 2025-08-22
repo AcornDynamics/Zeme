@@ -346,3 +346,18 @@ if __name__ == "__main__":
     # print("Wrote:", out_path)
 
 # %%
+
+# Replace all instances of "[Karte]" with "" in column: 'Iela'
+df_zeme['Iela'] = df_zeme['Iela'].str.replace("[Karte]", "", case=False, regex=False)
+
+# Replace all instances of "Datums:" with "" in column: 'Datums'
+df_zeme['Datums'] = df_zeme['Datums'].str.replace("Datums:", "", case=False, regex=False)
+
+# Filter rows based on column: 'Cena EUR'
+df_zeme = df_zeme[df_zeme['Cena EUR'].notna()]
+
+# Filter rows based on column: 'Platiba Daudzums'
+df_zeme = df_zeme[df_zeme['Platiba Daudzums'].notna()]
+
+# Change column type to int64 for column: 'Cena EUR'
+df_zeme = df_zeme.astype({'Cena EUR': 'int64'})
