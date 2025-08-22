@@ -1,7 +1,9 @@
 #%%
 # ss_lv_plots_two_phase.py
 # Phase 1: Discover regions, subregions, pages
-# Phase 2: Scrape listing pages -> ad links -> ad details (incl. Ciems)
+# Phase 2: Scrape listing pages -> ad links -> ad details
+# Adds: Ciems (tdo_368) and Pilseta/Pagasts (tdo_856)
+# Includes normalized area columns: Platiba m2, Platiba ha
 
 import re
 import time
@@ -13,8 +15,6 @@ from bs4 import BeautifulSoup
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-
-#%%
 
 BASE  = "https://www.ss.lv"
 ROOT  = f"{BASE}/lv/real-estate/plots-and-lands/"
@@ -53,7 +53,6 @@ def sess():
     return _SESSION
 
 #%%
-
 # -------------------------------
 # Helpers
 # -------------------------------
@@ -92,11 +91,9 @@ def row_to_link(row):
     return BASE + a["href"]
 
 #%%
-
 # ============================================================
 # PHASE 1: DISCOVERY
 # ============================================================
-
 def discover_regions(root=ROOT):
     """Return a sorted list of region URLs directly under ROOT."""
     soup, _ = get_soup(norm_cat(root))
@@ -106,12 +103,8 @@ def discover_regions(root=ROOT):
         href = a["href"]
         if not href.startswith("/lv/real-estate/plots-and-lands/"):
             continue
-        # expect immediate children like /.../riga/
         url = norm_cat(href)
-        # filter out root itself and duplicates
         if url != norm_cat(root) and url not in seen:
-            # keep only immediate children (one more path segment than ROOT)
-            # ROOT path segments count:
             base_parts = norm_cat(root).strip("/").split("/")
             url_parts  = url.strip("/").split("/")
             if len(url_parts) == len(base_parts) + 1:
@@ -131,7 +124,6 @@ def discover_subregions(region_url: str):
         if not href.startswith("/lv/real-estate/plots-and-lands/"):
             continue
         url = norm_cat(href)
-        # only accept one level deeper than region
         base_parts = norm_cat(region_url).strip("/").split("/")
         url_parts  = url.strip("/").split("/")
         if len(url_parts) == len(base_parts) + 1:
@@ -155,7 +147,6 @@ def discover_pagination_for_sell(sell_url: str, max_pages=300):
         rows, final_url = listing_rows(url)
 
         if page > 1 and final_url.rstrip("/") != url.rstrip("/"):
-            # redirected (e.g., to base /sell/) -> stop
             break
         if not rows:
             break
@@ -170,7 +161,7 @@ def phase1_discover_inventory(root=ROOT, include_region_if_no_subs=True):
     Returns:
       regions:                [region_url, ...]
       subregions_by_region:   {region_url: [subregion_url, ...], ...}
-      listing_pages:          [(owner_url, page_url), ...] where owner_url is the region or subregion
+      listing_pages:          [(owner_url, page_url), ...] owner_url is region or subregion
     """
     regions = discover_regions(root)
     subregions_by_region = {}
@@ -197,10 +188,10 @@ def phase1_discover_inventory(root=ROOT, include_region_if_no_subs=True):
 
     return regions, subregions_by_region, listing_pages
 
+#%%
 # ============================================================
 # PHASE 2: SCRAPING
 # ============================================================
-
 def collect_ad_links_from_pages(listing_pages):
     """
     listing_pages: list of (owner_url, page_url)
@@ -245,18 +236,20 @@ def parse_ad_details(url):
     r.raise_for_status()
     soup = BeautifulSoup(r.text, "lxml")
     return {
-        "Link":          url,
-        "Pilseta":       extract_text_by_id(soup, "tdo_20"),
-        "Iela":          extract_text_by_id(soup, "tdo_11"),
-        "Ciems":         extract_text_by_id(soup, "tdo_368"),  # NEW: Village
-        "Platiba":       extract_text_by_id(soup, "tdo_3"),
-        "Cena":          extract_text_by_id(soup, "tdo_8"),
-        "Zemes Tips":    extract_text_by_id(soup, "tdo_228"),
-        "Zemes Numurs":  extract_text_by_id(soup, "tdo_1631"),
-        "Datums":        extract_datums(soup),
+        "Link":               url,
+        "Pilseta":            extract_text_by_id(soup, "tdo_20"),   # City
+        "Pilseta/Pagasts":    extract_text_by_id(soup, "tdo_856"),  # NEW: City/Parish (e.g., "Ķekavas pag.")
+        "Iela":               extract_text_by_id(soup, "tdo_11"),   # Street
+        "Ciems":              extract_text_by_id(soup, "tdo_368"),  # Village
+        "Platiba":            extract_text_by_id(soup, "tdo_3"),    # Area (raw text)
+        "Cena":               extract_text_by_id(soup, "tdo_8"),    # Price (raw text)
+        "Zemes Tips":         extract_text_by_id(soup, "tdo_228"),  # Land usage/type
+        "Zemes Numurs":       extract_text_by_id(soup, "tdo_1631"), # Cadastral/land number
+        "Datums":             extract_datums(soup),                 # Date
     }
 
 def normalize_numeric_columns(df: pd.DataFrame) -> pd.DataFrame:
+    # --- Price split ---
     df["Cena"] = df["Cena"].fillna("NA").astype(str)
     df["Cena EUR"] = (
         df["Cena"].str.extract(r"([\d\s]+)\s*€", expand=False)
@@ -268,6 +261,7 @@ def normalize_numeric_columns(df: pd.DataFrame) -> pd.DataFrame:
         .str.replace(",", ".", regex=False)
     )
 
+    # --- Area split ---
     df["Platiba"] = df["Platiba"].fillna("NA").astype(str)
     plat_split = df["Platiba"].str.extract(r"([\d\.,]+)\s*(.*)")
     df["Platiba Daudzums"] = (
@@ -277,9 +271,27 @@ def normalize_numeric_columns(df: pd.DataFrame) -> pd.DataFrame:
     )
     df["Platiba Mervieniba"] = plat_split[1].fillna("")
 
+    # Convert numerics
     for col in ["Cena EUR", "Cena m2", "Platiba Daudzums"]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
+    # --- NEW: normalized area columns in m2 and ha ---
+    unit = (
+        df['Platiba Mervieniba']
+        .fillna('')
+        .str.strip()
+        .str.lower()
+        .str.replace('.', '', regex=False)
+        .str.replace(r'\s+', '', regex=True)
+        .str.replace('m²', 'm2', regex=False)
+    )
+    amt = df['Platiba Daudzums']  # already numeric
+    is_ha = unit.eq('ha')
+
+    df['Platiba m2'] = amt.where(~is_ha, amt * 10000)
+    df['Platiba ha'] = amt.where(is_ha,  amt / 10000)
+
+    # Drop raw text columns if you don't need them
     return df.drop(columns=["Platiba", "Cena"], errors="ignore")
 
 def phase2_scrape_inventory(listing_pages):
@@ -308,7 +320,6 @@ def phase2_scrape_inventory(listing_pages):
     df = df.drop_duplicates(subset=["Link"]).reset_index(drop=True)
     return df
 
-
 #%%
 # ============================================================
 # MAIN
@@ -316,11 +327,6 @@ def phase2_scrape_inventory(listing_pages):
 def run_two_phase(root=ROOT):
     # PHASE 1: discover
     regions, subregions_by_region, listing_pages = phase1_discover_inventory(root)
-
-    # (Optional) you can inspect the discovered inventory here
-    # print(regions)
-    # print(subregions_by_region)
-    # print([p for _, p in listing_pages][:20])
 
     # PHASE 2: scrape
     df = phase2_scrape_inventory(listing_pages)
@@ -333,48 +339,10 @@ if __name__ == "__main__":
         print(df_zeme.head(10).to_string(index=False))
 
     # Manual exports (uncomment if you want)
-    # df_zeme.to_csv("ss_lv_zeme_two_phase.csv", index=False)
-    # df_zeme.to_excel("ss_lv_zeme_two_phase.xlsx", index=False)
-    # df_zeme.to_parquet("ss_lv_zeme_two_phase.parquet", index=False)
-
-# %%
-# Replace all instances of "[Karte]" with "" in column: 'Iela'
-df_zeme['Iela'] = df_zeme['Iela'].str.replace("[Karte]", "", case=False, regex=False)
-
-# Replace all instances of "Datums:" with "" in column: 'Datums'
-df_zeme['Datums'] = df_zeme['Datums'].str.replace("Datums:", "", case=False, regex=False)
-
-# Filter rows based on column: 'Cena EUR'
-df_zeme = df_zeme[df_zeme['Cena EUR'].notna()]
-
-# Filter rows based on column: 'Platiba Daudzums'
-df_zeme = df_zeme[df_zeme['Platiba Daudzums'].notna()]
-
-# Replace all instances of "." with "" in column: 'Platiba Mervieniba'
-df_zeme['Platiba Mervieniba'] = df_zeme['Platiba Mervieniba'].str.replace(".", "", case=False, regex=False)
-
-#%%
-
-# --- Normalize units and add converted area columns ---
-# Clean the unit text: lower-case, remove dots/spaces, unify m² -> m2
-unit = (
-    df_zeme['Platiba Mervieniba']
-    .fillna('')
-    .str.strip()
-    .str.lower()
-    .str.replace('.', '', regex=False)
-    .str.replace(r'\s+', '', regex=True)
-    .str.replace('m²', 'm2', regex=False)
-)
-
-amt = pd.to_numeric(df_zeme['Platiba Daudzums'], errors='coerce')
-
-# If unit == ha  -> m2 = amt * 10000, ha = amt
-# If unit == m2  -> m2 = amt,         ha = amt / 10000
-is_ha = unit.eq('ha')
-
-df_zeme['Platiba m2'] = amt.where(~is_ha, amt * 10000)
-df_zeme['Platiba ha'] = amt.where(is_ha,  amt / 10000)
-
+    # import os
+    # os.makedirs("out", exist_ok=True)
+    # out_path = f"out/ss_lv_{datetime.now():%Y-%m-%d}.csv"
+    # df_zeme.to_csv(out_path, index=False)
+    # print("Wrote:", out_path)
 
 # %%
