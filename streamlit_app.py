@@ -9,19 +9,6 @@ try:
 except Exception:
     _HAS_PLOTLY = False
 
-# Map libraries are optional; show helpful message if missing
-try:
-    import folium, requests
-    from streamlit_folium import st_folium
-    _HAS_MAP = True
-except Exception:
-    _HAS_MAP = False
-
-# LVM GEO constants
-WMS_URL = "https://lvmgeoserver.lvm.lv/geoserver/ows"
-WFS_URL = "https://lvmgeoserver.lvm.lv/geoserver/publicwfs/wfs"
-LAYER   = "publicwfs:Kadastra_karte"
-
 
 def _to_numeric_clean(s: pd.Series) -> pd.Series:
     """Convert strings like '12 345,67€' to numeric, return NaN on failure."""
@@ -71,27 +58,6 @@ def _derive_size_m2(df: pd.DataFrame) -> pd.Series:
         return pd.Series(size_m2, name="Platiba m2")
     # No compatible columns found
     return pd.Series([np.nan] * len(df), name="Platiba m2")
-
-
-def _guess_cadastral_field(sample_feature):
-    """Try to guess the cadastral number property from a sample WFS feature."""
-    if not isinstance(sample_feature, dict):
-        return None
-    props = sample_feature.get("properties", {}) or {}
-    candidates = list(props.keys())
-    ranked = []
-    for k in candidates:
-        kl = k.lower()
-        score = 0
-        if "kadastr" in kl or "kadastra" in kl:
-            score += 2
-        if "num" in kl or "nr" in kl:
-            score += 1
-        if kl.endswith("nr") or kl.endswith("numurs"):
-            score += 1
-        ranked.append((score, k))
-    ranked.sort(reverse=True)
-    return ranked[0][1] if ranked and ranked[0][0] > 0 else None
 
 
 def main():
@@ -162,85 +128,10 @@ def main():
     else:
         st.info("Column 'Pilseta' not found in the dataset.")
 
-    # ---- Kadastra karte overlay (LVM) ---------------------------------------
-    st.subheader("Kadastra karte (LVM)")
-    if _HAS_MAP:
-        # Base map centered on Latvia
-        m = folium.Map(location=[56.95, 24.1], zoom_start=7, tiles="CartoDB Positron")
-
-        # WMS overlay (fast raster)
-        folium.WmsTileLayer(
-            url=WMS_URL,
-            layers=LAYER,
-            name="Kadastra karte (WMS)",
-            fmt="image/png",
-            transparent=True,
-            version="1.3.0",
-            attr="© LVM GEO",
-            overlay=True,
-            control=True,
-            opacity=0.8,
-        ).add_to(m)
-
-        # Optional: search one parcel via WFS (GeoJSON)
-        zemes_numurs = st.text_input("Zemes Numurs", placeholder="e.g. 64090020188")
-        if zemes_numurs:
-            # Try to guess the cadastral field if unknown:
-            field_name = None
-            try:
-                sample = requests.get(WFS_URL, params={
-                    "service": "WFS",
-                    "version": "2.0.0",
-                    "request": "GetFeature",
-                    "typenames": LAYER,
-                    "outputFormat": "application/json",
-                    "srsName": "EPSG:4326",
-                    "count": 1,
-                }, timeout=20).json()
-                feats = (sample or {}).get("features") or []
-                if feats:
-                    field_name = _guess_cadastral_field(feats[0])
-            except Exception:
-                field_name = None
-
-            # Fallback list of common field names if guessing fails
-            if not field_name:
-                for cand in ["KADASTRA_NUMURS", "kadastra_numurs", "KADASTRS", "KADASTRA", "KAD_NUMURS"]:
-                    field_name = cand
-                    break
-
-            params = {
-                "service": "WFS",
-                "version": "2.0.0",
-                "request": "GetFeature",
-                "typenames": LAYER,
-                "outputFormat": "application/json",
-                "srsName": "EPSG:4326",
-                "cql_filter": f"{field_name}='{zemes_numurs}'" if field_name else None,
-            }
-            params = {k: v for k, v in params.items() if v is not None}
-
-            try:
-                gj = requests.get(WFS_URL, params=params, timeout=20).json()
-                folium.GeoJson(
-                    gj,
-                    name=f"Zemes {zemes_numurs}",
-                    style_function=lambda f: {"color": "#FF6B00", "weight": 2, "fillOpacity": 0.15},
-                ).add_to(m)
-
-                # Zoom to bbox if present
-                b = gj.get("bbox")
-                if b and len(b) == 4:
-                    sw = [b[1], b[0]]  # (lat, lon)
-                    ne = [b[3], b[2]]
-                    m.fit_bounds([sw, ne])
-            except Exception as e:
-                st.warning(f"WFS fetch failed: {e}")
-
-        folium.LayerControl(collapsed=True).add_to(m)
-        st_folium(m, use_container_width=True, height=600)
-    else:
-        st.info("To enable the cadastral map overlay, install: `pip install folium streamlit-folium requests`")
+    # ---- Kadastra karte overlay (LVM) — temporarily disabled -----------------
+    # The folium/streamlit-folium map block has been commented out per request.
+    # When ready, re-insert the map overlay here (WMS/WFS) and ensure dependencies are installed.
+    # See previous version for reference.
 
     # ---- Data table (show filtered results) ---------------------------------
     df_display = filtered.copy()
@@ -252,6 +143,7 @@ def main():
         df_show = df_display.copy()
         df_show["Open"] = df_show["Link"]  # preserve URL
         column_order = ["Open"] + [c for c in df_show.columns if c not in ("Open", "Link")]
+    
         st.dataframe(
             df_show[column_order],
             column_config={
