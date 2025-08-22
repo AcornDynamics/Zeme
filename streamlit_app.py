@@ -1,7 +1,13 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.express as px
+
+# Plotly is optional; fall back to st.bar_chart if missing
+try:
+    import plotly.express as px
+    _HAS_PLOTLY = True
+except Exception:
+    _HAS_PLOTLY = False
 
 
 def _to_numeric_clean(s: pd.Series) -> pd.Series:
@@ -59,7 +65,7 @@ def main():
     st.write("Simple Streamlit app to explore property data.")
     df = pd.read_csv("df_zeme.csv")
 
-    # ---- Metric placeholders at the top (they will update after filters) ----
+    # ---- Metrics row (will be filled after filters are applied) -------------
     m1, m2, m3 = st.columns(3)
 
     # ---- Filters (shown under the metrics) ----------------------------------
@@ -72,7 +78,7 @@ def main():
     with f2:
         sel_types = st.multiselect("Zemes Tips", options=types, default=[])
 
-    # Apply filters
+    # ---- Apply filters ------------------------------------------------------
     filtered = df.copy()
     if sel_cities and "Pilseta" in filtered.columns:
         filtered = filtered[filtered["Pilseta"].astype(str).isin(sel_cities)]
@@ -80,17 +86,11 @@ def main():
         filtered = filtered[filtered["Zemes Tips"].astype(str).isin(sel_types)]
 
     # ---- KPIs (metrics) based on filtered data ------------------------------
-    if "Link" in filtered.columns:
-        property_count = int(filtered["Link"].dropna().shape[0])
-    else:
-        property_count = int(len(filtered))
-
+    property_count = int(filtered["Link"].dropna().shape[0]) if "Link" in filtered.columns else int(len(filtered))
     avg_price = _iqr_trim_mean(filtered["Cena EUR"]) if "Cena EUR" in filtered.columns else float("nan")
-
     size_m2_series = _derive_size_m2(filtered)
     avg_size_m2 = _iqr_trim_mean(size_m2_series)
 
-    # Fill metric placeholders (these render above the filters)
     with m1:
         st.metric("Property count", f"{property_count:,}")
     with m2:
@@ -98,32 +98,32 @@ def main():
     with m3:
         st.metric("Avg size (m²)", "—" if np.isnan(avg_size_m2) else f"{avg_size_m2:,.0f} m²")
 
+    # ---- Chart: Properties per City (count of Link per Pilseta) -------------
+    if "Pilseta" in filtered.columns:
+        if "Link" in filtered.columns:
+            grp = (filtered[filtered["Link"].notna()]
+                   .assign(Pilseta=filtered["Pilseta"].astype(str))
+                   .groupby("Pilseta")["Link"].count()
+                   .reset_index(name="Property count"))
+        else:
+            grp = (filtered.assign(Pilseta=filtered["Pilseta"].astype(str))
+                   .groupby("Pilseta").size()
+                   .reset_index(name="Property count"))
 
-# ---- Chart: Properties per City (count of Link per Pilseta) ----
-# Assumes you have `filtered` already (the dataframe after applying multiselects).
-if "Pilseta" in filtered.columns:
-    if "Link" in filtered.columns:
-        grp = (filtered[filtered["Link"].notna()]
-               .assign(Pilseta=filtered["Pilseta"].astype(str))
-               .groupby("Pilseta")["Link"].count()
-               .reset_index(name="Property count"))
+        if not grp.empty:
+            grp = grp.sort_values("Property count", ascending=False)
+            if _HAS_PLOTLY:
+                grp["Pilseta"] = pd.Categorical(grp["Pilseta"], categories=grp["Pilseta"], ordered=True)
+                fig = px.bar(grp, x="Pilseta", y="Property count", title="Properties per City")
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.warning("Plotly not installed; showing a basic bar chart instead.")
+                st.bar_chart(grp.set_index("Pilseta")["Property count"])
+        else:
+            st.info("No data to plot for selected filters.")
     else:
-        grp = (filtered.assign(Pilseta=filtered["Pilseta"].astype(str))
-               .groupby("Pilseta")
-               .size()
-               .reset_index(name="Property count"))
+        st.info("Column 'Pilseta' not found in the dataset.")
 
-    if not grp.empty:
-        grp = grp.sort_values("Property count", ascending=False)
-        grp["Pilseta"] = pd.Categorical(grp["Pilseta"], categories=grp["Pilseta"], ordered=True)
-        fig = px.bar(grp, x="Pilseta", y="Property count", title="Properties per City")
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.info("No data to plot for selected filters.")
-else:
-    st.info("Column 'Pilseta' not found in the dataset.")
-    
-    
     # ---- Data table (show filtered results) ---------------------------------
     df_display = filtered.copy()
     if "Platiba m2" not in df_display.columns and not size_m2_series.isna().all():
