@@ -58,35 +58,53 @@ def main():
     st.write("Simple Streamlit app to explore property data.")
     df = pd.read_csv("df_zeme.csv")
 
-    # ---- KPIs (metrics) -----------------------------------------------------
-    # Property count (count of non-null 'Link' entries)
-    if "Link" in df.columns:
-        property_count = int(df["Link"].dropna().shape[0])
+    # ---- Metric placeholders at the top (they will update after filters) ----
+    m1, m2, m3 = st.columns(3)
+
+    # ---- Filters (shown under the metrics) ----------------------------------
+    cities = sorted(df["Pilseta"].dropna().astype(str).unique()) if "Pilseta" in df.columns else []
+    types = sorted(df["Zemes Tips"].dropna().astype(str).unique()) if "Zemes Tips" in df.columns else []
+
+    f1, f2 = st.columns(2)
+    with f1:
+        sel_cities = st.multiselect("Pilseta", options=cities, default=[])
+    with f2:
+        sel_types = st.multiselect("Zemes Tips", options=types, default=[])
+
+    # Apply filters
+    filtered = df.copy()
+    if sel_cities and "Pilseta" in filtered.columns:
+        filtered = filtered[filtered["Pilseta"].astype(str).isin(sel_cities)]
+    if sel_types and "Zemes Tips" in filtered.columns:
+        filtered = filtered[filtered["Zemes Tips"].astype(str).isin(sel_types)]
+
+    # ---- KPIs (metrics) based on filtered data ------------------------------
+    if "Link" in filtered.columns:
+        property_count = int(filtered["Link"].dropna().shape[0])
     else:
-        property_count = int(len(df))
+        property_count = int(len(filtered))
 
-    # Avg price (EUR), outlier-trimmed
-    avg_price = _iqr_trim_mean(df["Cena EUR"]) if "Cena EUR" in df.columns else float("nan")
+    avg_price = _iqr_trim_mean(filtered["Cena EUR"]) if "Cena EUR" in filtered.columns else float("nan")
 
-    # Avg size (m²), derive if needed, outlier-trimmed
-    size_m2_series = _derive_size_m2(df)
-    if "Platiba m2" not in df.columns and not size_m2_series.isna().all():
-        # add derived column so the table shows it as well
-        df["Platiba m2"] = size_m2_series
+    size_m2_series = _derive_size_m2(filtered)
     avg_size_m2 = _iqr_trim_mean(size_m2_series)
 
-    c1, c2, c3 = st.columns(3)
-    with c1:
+    # Fill metric placeholders (these render above the filters)
+    with m1:
         st.metric("Property count", f"{property_count:,}")
-    with c2:
+    with m2:
         st.metric("Avg price (EUR)", "—" if np.isnan(avg_price) else f"{avg_price:,.0f} €")
-    with c3:
+    with m3:
         st.metric("Avg size (m²)", "—" if np.isnan(avg_size_m2) else f"{avg_size_m2:,.0f} m²")
 
-    # ---- Data table ----------------------------------------------------------
+    # ---- Data table (show filtered results) ---------------------------------
+    df_display = filtered.copy()
+    if "Platiba m2" not in df_display.columns and not size_m2_series.isna().all():
+        df_display["Platiba m2"] = size_m2_series
+
     st.dataframe(
-        df,
-        column_config={"Link": st.column_config.LinkColumn("Link")},
+        df_display,
+        column_config={"Link": st.column_config.LinkColumn("Link")} if "Link" in df_display.columns else None,
         use_container_width=True,
         height=600,
     )
