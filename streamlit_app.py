@@ -124,17 +124,33 @@ def main():
     else:
         st.info("Column 'Pilseta' not found in the dataset.")
 
-    # ---- Data table (show filtered results) ---------------------------------
-    df_display = filtered.copy()
-    if "Platiba m2" not in df_display.columns and not size_m2_series.isna().all():
-        df_display["Platiba m2"] = size_m2_series
+# ---- Data table (show filtered results) ---------------------------------
+df_display = filtered.copy()
+if "Platiba m2" not in df_display.columns and not size_m2_series.isna().all():
+    df_display["Platiba m2"] = size_m2_series
 
+# Show links as a single 🔗 icon instead of full URL
+if "Link" in df_display.columns:
+    df_show = df_display.copy()
+    df_show["Open"] = df_show["Link"]  # preserve URL
+    column_order = ["Open"] + [c for c in df_show.columns if c not in ("Open", "Link")]
     st.dataframe(
-        df_display,
-        column_config={"Link": st.column_config.LinkColumn("Link")} if "Link" in df_display.columns else None,
+        df_show[column_order],
+        column_config={
+            "Open": st.column_config.LinkColumn(
+                "Open", help="Open listing", display_text="🔗"
+            ),
+        },
         use_container_width=True,
         height=600,
     )
+else:
+    st.dataframe(
+        df_display,
+        use_container_width=True,
+        height=600,
+    )
+
 
 
 if __name__ == "__main__":
