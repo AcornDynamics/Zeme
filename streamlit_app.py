@@ -56,7 +56,7 @@ def _derive_size_m2(df: pd.DataFrame) -> pd.Series:
 def main():
     st.title("Zeme Data Explorer")
     st.write("Simple Streamlit app to explore property data.")
-    df = pd.read_csv("df_zeme.csv")
+    df = pd.read_csv("df_zeme_filtered.csv")
 
     # ---- Metrics row (filled after filters) ---------------------------------
     m1, m2, m3 = st.columns(3)

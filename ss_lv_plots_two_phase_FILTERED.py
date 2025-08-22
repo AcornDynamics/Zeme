@@ -2,6 +2,7 @@
 # Scrapes only selected regions & land types.
 # Keeps: Ciems (tdo_368), Pilseta/Pagasts (tdo_856), normalized area columns.
 
+#%%
 import re
 import time
 from datetime import datetime
@@ -37,6 +38,8 @@ ALLOWED_ZEMES_TIPS = {
 LISTING_DELAY = 0.10
 AD_DELAY      = 0.10
 VERBOSE       = True
+
+#%%
 
 # -------------------------------
 # Robust session (lazy)
@@ -105,6 +108,8 @@ def row_to_link(row):
 def last_slug(url: str) -> str:
     parts = norm_cat(url).strip("/").split("/")
     return parts[-1] if parts else ""
+
+#%%
 
 # ============================================================
 # PHASE 1: DISCOVERY (filtered to allowed regions)
@@ -180,6 +185,8 @@ def phase1_discover_inventory(root=ROOT, include_region_if_no_subs=True):
         print(f"[SUMMARY] Regions={len(regions)}, Subregions={total_subs}, Listing pages={total_pages}")
 
     return regions, subregions_by_region, listing_pages
+
+#%%
 
 # ============================================================
 # PHASE 2: SCRAPING
@@ -309,6 +316,8 @@ def phase2_scrape_inventory(listing_pages):
     df = df[df["Platiba Daudzums"].notna()]
     return df
 
+#%%
+
 # ============================================================
 # MAIN
 # ============================================================
@@ -329,3 +338,5 @@ if __name__ == "__main__":
     # out_path = f"out/ss_lv_FILTERED_{datetime.now():%Y-%m-%d}.csv"
     # df_zeme.to_csv(out_path, index=False)
     # print("Wrote:", out_path)
+
+# %%
